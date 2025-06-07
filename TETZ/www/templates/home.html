@@ -1,0 +1,103 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Новости компании{% endblock %}
+
+{% block content %}
+<!-- Баннер с фоновым изображением и текстом -->
+<div class="hero-banner position-relative mb-5" style="height: 400px; overflow: hidden;">
+    <!-- Фоновое изображение -->
+    <img src="{% static 'www/images/bg1.jpg' %}"
+         alt="Фоновый баннер"
+         class="w-100 h-100"
+         style="object-fit: cover; position: absolute; top: 0; left: 0; z-index: 0;">
+
+    <!-- Затемнение фона -->
+
+    <!-- Контент поверх изображения -->
+    <div class="position-relative z-index-2 text-center" style="height: 100%; display: flex; flex-direction: column; justify-content: center;">
+        <!-- Обертка для логотипа и текста -->
+        <div class="d-flex align-items-center justify-content-left mb-3">
+            <!-- Логотип -->
+            <img src="{% static 'www/images/logo2.png' %}"
+                 alt="Логотип"
+                 style="width: 95px; height: 89px; object-fit: contain; margin-right: 15px; background-color: rgba(40, 167, 69, 0.7);border-radius: 5px;">
+
+            <!-- Текст с белым цветом -->
+            <h1 class="display-4 fw-bold text-white mb-0 position-relative"
+                style="padding: 10px 20px; background-color: rgba(40, 167, 69, 0.7); border-radius: 5px;">
+                ЭЛЕКТРОТЕХНИК
+            </h1>
+        </div>
+
+        <!-- Подзаголовок -->
+        <p class="lead text-white" style="display: inline-block;
+                  padding: 5px 15px;
+                  background-color: rgba(100, 100, 100, 0.6);
+                  border-radius: 3px;
+                  margin-top: 10px; text-align: left; margin-right: 1080px;"
+        >электронная газета</p>
+    </div>
+</div>
+
+<!-- Остальной контент без изменений -->
+<div class="container">
+    <div class="row">
+        <div class="col-md-8">
+            <h1>Последние новости</h1>
+
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Заголовок новости</h5>
+                    <p class="card-text">Текст новости. Здесь будет краткое описание или полный текст новостной статьи.</p>
+                    <p class="text-muted">Опубликовано: 15.05.2023</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <!-- Табло выполнения плана -->
+            <div class="card mb-3">
+                <div class="card-header bg-primary text-white">
+                    Выполнение плана производства
+                </div>
+                <div class="card-body text-center">
+                    <div class="mb-3">
+                        <div class="fs-5">{{ last_update }}</div>
+                        <div class="fw-bold">ВЫПОЛНЕНИЕ МЕСЯЧНОГО ПЛАНА ПО ЗАВОДУ</div>
+                        <div class="display-4 fw-bold"
+                             style="color: {% if monthly_plan >= 100 %}#28a745{% else %}#dc3545{% endif %};">
+                            {{ monthly_plan }}%
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <div class="fw-bold">ВЫПОЛНЕНИЕ ГОДОВОГО ПЛАНА ПО ЗАВОДУ</div>
+                        <div class="display-4 fw-bold"
+                             style="color: {% if yearly_plan >= 100 %}#28a745{% else %}#dc3545{% endif %};">
+                            {{ yearly_plan }}%
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer text-muted small">
+                    Данные обновляются ежедневно
+                </div>
+            </div>
+
+            <!-- Быстрые ссылки -->
+            <div class="card">
+                <div class="card-header">
+                    Быстрые ссылки
+                </div>
+                <div class="card-body">
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item"><a href="#">Важная информация</a></li>
+                        <li class="list-group-item"><a href="#">Документы</a></li>
+                        <li class="list-group-item"><a href="#">Контакты</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

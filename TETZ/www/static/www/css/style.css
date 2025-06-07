@@ -1,0 +1,58 @@
+/* Стили для баннера */
+.hero-banner {
+    position: relative;
+    background-color: #343a40;
+}
+
+.hero-banner img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* Затемнение фона изображения */
+.hero-banner::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.1);
+}
+
+/* Контент баннера */
+.hero-content {
+    position: relative;
+    z-index: 2;
+    color: white;
+    padding: 2rem;
+    text-align: left;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+    .hero-banner {
+        height: 300px !important;
+    }
+    .hero-banner h1 {
+        font-size: 2rem;
+    }
+}
+
+/* Стили для карточек сводной информации */
+.card-body h3 {
+    margin: 0;
+    font-weight: bold;
+}
+
+/* Адаптивные стили для таблицы */
+.table-responsive {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+/* Подсветка строк таблицы */
+.table tbody tr:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+}
