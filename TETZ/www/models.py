@@ -1,6 +1,7 @@
-from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.db import models
 from django.utils import timezone
+
 
 class Department(models.Model):
     department_id = models.AutoField(primary_key=True)

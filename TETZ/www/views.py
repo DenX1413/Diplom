@@ -1,26 +1,29 @@
+import hashlib
+import json
+import os
+import uuid
+from datetime import datetime
+from io import BytesIO  # Для работы с бинарными данными в памяти
 from random import randint
 
-from django.shortcuts import render, redirect
-from django.contrib.auth import login, logout
-from django.contrib import messages
-from django.contrib.auth.decorators import login_required
-from .mixins import AuthRequiredMixin
-from django.views import View
-import hashlib, psycopg2
-from .models import *
-import os
-from django.conf import settings
-import uuid
-import json
-from datetime import datetime
-from django.http import JsonResponse, FileResponse
-from django.views.decorators.http import require_POST, require_GET
-from django.views.decorators.csrf import csrf_exempt
-import pandas as pd
 import numpy as np
+import pandas as pd
+import psycopg2
+from django.conf import settings
+from django.contrib import messages
+from django.contrib.auth import login, logout
+from django.contrib.auth.decorators import login_required
+from django.http import FileResponse, JsonResponse
+from django.shortcuts import redirect, render
+from django.urls import reverse
+from django.views import View
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET, require_POST
 from docx import Document  # Импорт для работы с Word-документами
-from io import BytesIO  # Для работы с бинарными данными в памяти
+
 from .forms import ImprovementProposalForm
+from .mixins import AuthRequiredMixin
+from .models import *
 from .mxl_parser import MxlParser
 
 
@@ -276,11 +279,7 @@ def upload_file(request):
             }
         )
 
-        return JsonResponse({
-            'status': 'success',
-            'file_id': uploaded_file_record.file_id,
-            'filename': uploaded_file.name
-        })
+        return redirect(reverse('visualization'))
 
     except Exception as e:
         return JsonResponse({
@@ -310,11 +309,8 @@ def delete_file(request, file_id):
             user_agent=request.META.get('HTTP_USER_AGENT', '')
         )
 
-        # Возвращаем JSON с правильным заголовком
-        return JsonResponse(
-            {'status': 'success', 'message': 'Файл успешно удален'},
-            content_type='application/json'  # Важно указать content_type
-        )
+
+        return redirect(reverse('visualization'))
 
     except Exception as e:
         return JsonResponse(
@@ -487,7 +483,7 @@ def visualization_data(request, file_id):
             'tableData': df.head(100).to_dict('records')  # Ограничиваем количество строк
         }
 
-        return JsonResponse(response_data)
+        return redirect(reverse('visualization'))
 
     except UploadedFile.DoesNotExist:
         return JsonResponse({
