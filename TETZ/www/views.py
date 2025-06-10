@@ -441,60 +441,119 @@ class VisualizationView(AuthRequiredMixin, View):
         return render(request, 'visualization.html', context)
 
 
-@require_GET
+# views.py
 @login_required
 def visualization_data(request, file_id):
     try:
         file_record = UploadedFile.objects.get(file_id=file_id, user=request.user)
         file_path = os.path.join(settings.MEDIA_ROOT, 'uploads', file_record.stored_filename)
 
-        # Обработка файла в зависимости от типа
-        if file_record.file_type == 'csv':
+        # Определяем тип файла и читаем данные
+        if file_record.file_type == 'xlsx':
+            df = pd.read_excel(file_path, engine='openpyxl')
+        elif file_record.file_type == 'csv':
             df = pd.read_csv(file_path)
-        elif file_record.file_type == 'xlsx':
-            df = pd.read_excel(file_path, engine='openpyxl')  # Явно указываем движок
-        elif file_record.file_type == 'json':
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            df = pd.DataFrame(data)
         else:
-            return JsonResponse({
-                'status': 'error',
-                'message': f'Unsupported file type: {file_record.file_type}'
-            }, status=400)
+            return redirect('visualization')  # Если формат не поддерживается
 
-        # Функция для генерации случайного цвета
-        def get_random_color():
-            return f'rgba({randint(0, 255)}, {randint(0, 255)}, {randint(0, 255)}, 0.7)'
+        # Преобразуем DataFrame в список словарей для передачи в шаблон
+        data = df.to_dict('records')
+        columns = df.columns.tolist()
 
-        # Подготовка данных для графика
-        response_data = {
-            'status': 'success',
+        # Определяем тип данных для выбора визуализации
+        chart_type = 'bar'  # По умолчанию
+        if 'Параметр' in columns and 'Значение' in columns:
+            chart_type = 'funnel'
+        elif 'Месяц' in columns:
+            chart_type = 'line'
+
+        context = {
             'file_id': file_id,
             'file_name': file_record.original_filename,
-            'labels': df.index.astype(str).tolist() if hasattr(df, 'index') else [],
-            'datasets': [{
-                'label': col,
-                'data': df[col].tolist(),
-                'backgroundColor': get_random_color(),
-                'borderColor': get_random_color(),
-                'borderWidth': 1
-            } for col in df.columns if pd.api.types.is_numeric_dtype(df[col])],
-            'tableData': df.head(100).to_dict('records')  # Ограничиваем количество строк
+            'data': data,
+            'columns': columns,
+            'chart_type': chart_type,
+            'user_files': UploadedFile.objects.filter(user=request.user).order_by('-upload_date')
         }
 
-        return redirect(reverse('visualization'))
+        return render(request, 'visualization.html', context)
 
-    except UploadedFile.DoesNotExist:
-        return JsonResponse({
-            'status': 'error',
-            'message': 'File not found or access denied'
-        }, status=404)
     except Exception as e:
-        return JsonResponse({
-            'status': 'error',
-            'message': str(e)
-        }, status=500)
+        messages.error(request, f'Ошибка обработки файла: {str(e)}')
+        return redirect('visualization')
+
+def process_funnel_data(df):
+    # Обработка данных воронки продаж
+    labels = df[df['Параметр'].notna()]['Параметр'].tolist()
+    values = df[df['Значение'].notna()]['Значение'].tolist()
+
+    return {
+        'type': 'funnel',
+        'labels': labels,
+        'values': values,
+        'chart_type': 'bar',
+        'options': {
+            'indexAxis': 'y',
+            'plugins': {
+                'title': {
+                    'display': True,
+                    'text': 'Воронка продаж'
+                }
+            }
+        }
+    }
+
+
+def process_inventory_data(df):
+    # Обработка данных комплектации
+    summary_rows = df[df['Изделие'].notna() & df['Укомплектован (%)'].notna()]
+    products = summary_rows['Изделие'].tolist()
+    complete = summary_rows['Укомплектован (%)'].tolist()
+    not_available = summary_rows['Нет в наличие (%)'].tolist()
+
+    return {
+        'type': 'inventory',
+        'products': products,
+        'complete': complete,
+        'not_available': not_available,
+        'chart_type': 'pie',
+        'options': {
+            'plugins': {
+                'title': {
+                    'display': True,
+                    'text': 'Укомплектованность изделий'
+                }
+            }
+        }
+    }
+
+
+def process_production_data(df):
+    # Обработка производственных данных
+    months = df['Месяц'].tolist()
+    metrics = [col for col in df.columns if col != 'Месяц']
+    datasets = []
+
+    for metric in metrics:
+        datasets.append({
+            'label': metric,
+            'data': df[metric].tolist()
+        })
+
+    return {
+        'type': 'production',
+        'labels': months,
+        'datasets': datasets,
+        'chart_type': 'line',
+        'options': {
+            'plugins': {
+                'title': {
+                    'display': True,
+                    'text': 'Производственные показатели'
+                }
+            }
+        }
+    }
 
 # Вспомогательные функции для обработки данных
 def process_sales_data(df, chart_type):
