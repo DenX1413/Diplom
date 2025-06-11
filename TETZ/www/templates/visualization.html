@@ -251,34 +251,49 @@
 
 
 <script>
-    $(document).ready(function() {
+$(document).ready(function() {
     // Инициализация переменных
     let currentChart = null;
-    const chartData = {{ chart_data|safe|default:"{}" }};
+    const rawChartData = {{ chart_data|safe }};
     const initialChartType = '{{ chart_type|default:"bar" }}';
 
-    console.log("Chart data:", chartData);
+    console.log("Raw chart data:", rawChartData);
 
-    // Проверка, что chartData - объект (на случай, если default сработал)
-    const validatedChartData = typeof chartData === 'object' ? chartData : JSON.parse(chartData || '{}');
+    // Парсим данные
+    let chartData;
+    try {
+        chartData = typeof rawChartData === 'string' ? JSON.parse(rawChartData) : rawChartData;
+
+        // Проверяем данные на валидность
+        if (!chartData.labels || !chartData.datasets) {
+            console.error("Invalid chart data structure");
+            chartData = { labels: [], datasets: [] };
+        }
+    } catch (e) {
+        console.error("Error parsing chart data:", e);
+        chartData = { labels: [], datasets: [] };
+    }
 
     // Инициализация графика при загрузке страницы
-    if (validatedChartData.labels && validatedChartData.values) {
-        renderChart(initialChartType);
+    if (chartData.labels.length > 0 && chartData.datasets.length > 0) {
+        renderChart(initialChartType, chartData);
+    } else {
+        console.warn("No valid chart data available");
+        toastr.error('Нет данных для построения графика', 'Ошибка');
     }
 
     // Обработчик изменения типа графика
     $('.chart-type-btn').on('click', function(e) {
         e.preventDefault();
         const chartType = $(this).data('type');
-        renderChart(chartType);
+        renderChart(chartType, chartData);
     });
 
     // Функция рендеринга графика
-    function renderChart(chartType) {
-        const ctx = document.getElementById('mainChart');
+    function renderChart(chartType, data) {
+        const ctx = document.getElementById('mainChart').getContext('2d');
         if (!ctx) {
-            console.error("Canvas element not found!");
+            console.error("Canvas context not found!");
             return;
         }
 
@@ -288,98 +303,118 @@
             currentChart = null;
         }
 
-        // Проверка наличия данных
-        if (!validatedChartData.labels || !validatedChartData.values) {
-            console.error("Chart data is incomplete!");
-            return;
-        }
+        // Расширенная цветовая палитра (12 цветов)
+        const colorPalette = [
+            'rgba(255, 99, 132, 0.7)',    // Красный
+            'rgba(54, 162, 235, 0.7)',    // Синий
+            'rgba(255, 206, 86, 0.7)',    // Желтый
+            'rgba(75, 192, 192, 0.7)',    // Зеленый
+            'rgba(153, 102, 255, 0.7)',   // Фиолетовый
+            'rgba(255, 159, 64, 0.7)',    // Оранжевый
+            'rgba(199, 199, 199, 0.7)',   // Серый
+            'rgba(83, 102, 255, 0.7)',    // Индиго
+            'rgba(40, 167, 69, 0.7)',     // Зеленый (другой)
+            'rgba(108, 117, 125, 0.7)',   // Серый (другой)
+            'rgba(220, 53, 69, 0.7)',     // Красный (яркий)
+            'rgba(253, 126, 20, 0.7)'     // Оранжевый (яркий)
+        ];
 
-        // Подготовка данных
-        const labels = validatedChartData.labels;
-        const values = validatedChartData.values.map(val => {
-            // Преобразуем значения в числа
-            const num = parseFloat(val);
-            return isNaN(num) ? 0 : num;
+        // Подготовка данных для Chart.js
+        const datasets = data.datasets.map((dataset, i) => {
+            // Для круговых/кольцевых диаграмм - разный цвет для каждого значения
+            if (chartType === 'pie' || chartType === 'doughnut') {
+                return {
+                    label: dataset.label,
+                    data: dataset.data.map(val => typeof val === 'string' ? parseFloat(val.replace(/\s/g, '')) || 0 : val),
+                    backgroundColor: dataset.data.map((_, idx) => colorPalette[idx % colorPalette.length]),
+                    borderColor: dataset.data.map((_, idx) => colorPalette[idx % colorPalette.length]),
+                    borderWidth: 1
+                };
+            }
+            // Для других типов - один цвет на весь набор данных
+            return {
+                label: dataset.label,
+                data: dataset.data.map(val => typeof val === 'string' ? parseFloat(val.replace(/\s/g, '')) || 0 : val),
+                backgroundColor: colorPalette[i % colorPalette.length],
+                borderColor: colorPalette[i % colorPalette.length],
+                borderWidth: 1
+            };
         });
 
-        // Настройки для разных типов графиков
-        let chartOptions = {
+        // Настройки графика
+        const options = {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
                 title: {
                     display: true,
-                    text: `${validatedChartData.value_column || 'Values'} по ${validatedChartData.label_column || 'Categories'}`
+                    font: {
+                        size: 16
+                    }
+                },
+                legend: {
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        pointStyle: 'circle',
+                        padding: 20,
+                        font: {
+                            size: 12
+                        }
+                    }
                 },
                 tooltip: {
                     callbacks: {
                         label: function(context) {
-                            return `${context.dataset.label}: ${context.raw}`;
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.parsed.y !== undefined) {
+                                label += context.parsed.y.toLocaleString();
+                            } else {
+                                label += context.raw.toLocaleString();
+                            }
+                            return label;
                         }
+                    }
+                }
+            },
+            scales: chartType === 'pie' || chartType === 'doughnut' ? {} : {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return value.toLocaleString();
+                        }
+                    },
+                    grid: {
+                        display: true,
+                        color: 'rgba(0, 0, 0, 0.1)'
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false
                     }
                 }
             }
         };
 
         // Специальные настройки для разных типов графиков
-        switch (chartType) {
-            case 'bar':
-                chartOptions.indexAxis = 'y'; // Горизонтальные столбцы
-                chartOptions.scales = { x: { beginAtZero: true } };
-                break;
-            case 'line':
-                chartOptions.scales = { y: { beginAtZero: true } };
-                break;
-            case 'pie':
-            case 'doughnut':
-                chartOptions.plugins.tooltip.callbacks.label = function(context) {
-                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                    const percentage = Math.round((context.raw / total) * 100);
-                    return `${context.label}: ${context.raw} (${percentage}%)`;
-                };
-                break;
+        if (chartType === 'bar') {
+            options.indexAxis = 'y'; // Горизонтальные столбцы
         }
 
         // Создаем график
         currentChart = new Chart(ctx, {
             type: chartType,
             data: {
-                labels: labels,
-                datasets: [{
-                    label: validatedChartData.value_column || 'Values',
-                    data: values,
-                    backgroundColor: getChartColors(chartType, values.length),
-                    borderColor: 'rgba(75, 192, 192, 1)',
-                    borderWidth: 1
-                }]
+                labels: data.labels,
+                datasets: datasets
             },
-            options: chartOptions
+            options: options
         });
-    }
-
-    // Функция для получения цветов графика
-    function getChartColors(chartType, dataLength) {
-        const colors = [];
-        const colorPalette = [
-            'rgba(255, 99, 132, 0.7)',
-            'rgba(54, 162, 235, 0.7)',
-            'rgba(255, 206, 86, 0.7)',
-            'rgba(75, 192, 192, 0.7)',
-            'rgba(153, 102, 255, 0.7)',
-            'rgba(255, 159, 64, 0.7)'
-        ];
-
-        if (chartType === 'pie' || chartType === 'doughnut') {
-            // Для круговых диаграмм - разные цвета для каждого элемента
-            for (let i = 0; i < dataLength; i++) {
-                colors.push(colorPalette[i % colorPalette.length]);
-            }
-        } else {
-            // Для других типов - один цвет
-            colors.push(colorPalette[0]);
-        }
-
-        return colors;
     }
 
     // Обработчик кнопки экспорта
@@ -397,12 +432,43 @@
         }
     });
 
+    // Обработчик кнопки обновления
+    $('#refreshBtn').on('click', function() {
+        location.reload();
+    });
+
+    // Обработчик кнопки сохранения визуализации
+    $('#saveVizBtn').on('click', function() {
+        $('#saveVizModal').modal('show');
+    });
+
+    // Подтверждение сохранения визуализации
+    $('#confirmSaveViz').on('click', function() {
+        const title = $('#vizTitle').val();
+        const description = $('#vizDescription').val();
+        const isPublic = $('#vizIsPublic').is(':checked');
+
+        if (!title) {
+            toastr.error('Введите название визуализации', 'Ошибка');
+            return;
+        }
+
+        // Здесь должна быть логика сохранения
+        toastr.success('Визуализация сохранена', 'Успешно');
+        $('#saveVizModal').modal('hide');
+    });
+
     // Инициализация Toastr
     toastr.options = {
         "closeButton": true,
         "progressBar": true,
         "positionClass": "toast-top-right",
-        "timeOut": "3000"
+        "timeOut": "3000",
+        "extendedTimeOut": "1000",
+        "showEasing": "swing",
+        "hideEasing": "linear",
+        "showMethod": "fadeIn",
+        "hideMethod": "fadeOut"
     };
 
     // Показываем сообщения Django

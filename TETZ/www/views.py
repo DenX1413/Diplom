@@ -448,40 +448,79 @@ def visualization_data(request, file_id):
         file_record = UploadedFile.objects.get(file_id=file_id, user=request.user)
         file_path = os.path.join(settings.MEDIA_ROOT, 'uploads', file_record.stored_filename)
 
+        # Чтение файла с учетом типа
         if file_record.file_type == 'xlsx':
             df = pd.read_excel(file_path, engine='openpyxl')
         elif file_record.file_type == 'csv':
-            df = pd.read_csv(file_path)
-        else:
+            # Пробуем определить разделитель автоматически
+            try:
+                # Сначала пробуем с разделителем точка с запятой
+                df = pd.read_csv(file_path, sep=';', thousands=' ', encoding='utf-8-sig')
+                # Если получилась только одна колонка, пробуем запятую
+                if len(df.columns) == 1:
+                    df = pd.read_csv(file_path, sep=',', thousands=' ', encoding='utf-8-sig')
+            except Exception as e:
+                print(f"Error reading CSV: {str(e)}")
+                return redirect('visualization')
+
+        # Очистка данных: удаление пробелов в числах и преобразование в числовой формат
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                # Удаляем пробелы в числах и неразрывные пробелы
+                df[col] = df[col].str.replace(r'[\s\xa0]', '', regex=True)
+                # Пробуем преобразовать в числа
+                try:
+                    df[col] = pd.to_numeric(df[col])
+                except:
+                    pass  # Оставляем как строку, если не число
+
+        # Проверяем, что у нас есть данные
+        if df.empty:
+            messages.error(request, 'Файл не содержит данных')
             return redirect('visualization')
 
-        # Преобразуем DataFrame в список словарей
-        data = df.to_dict('records')
+        # Подготовка данных для графика
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        non_numeric_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
 
-        # Автоматически определяем колонки для графика
-        if len(df.columns) >= 2:
-            # Берем первые две колонки (первая - метки, вторая - значения)
-            chart_data = {
-                'label_column': df.columns[0],
-                'value_column': df.columns[1],
-                'labels': df.iloc[:, 0].astype(str).tolist(),
-                'values': df.iloc[:, 1].tolist()
-            }
-        else:
-            # Если только одна колонка - используем индекс как метки
-            chart_data = {
-                'label_column': 'Index',
-                'value_column': df.columns[0],
-                'labels': df.index.astype(str).tolist(),
-                'values': df.iloc[:, 0].tolist()
-            }
+        # Если нет числовых колонок, пытаемся найти числа в строках
+        if not numeric_cols and non_numeric_cols:
+            # Пробуем преобразовать первую строковую колонку в числа
+            try:
+                df[non_numeric_cols[0]] = pd.to_numeric(df[non_numeric_cols[0]].str.replace(r'[\s\xa0]', '', regex=True))
+                numeric_cols = [non_numeric_cols[0]]
+                non_numeric_cols = non_numeric_cols[1:]
+            except:
+                pass
+
+        # Если все еще нет числовых данных, показываем ошибку
+        if not numeric_cols:
+            messages.error(request, 'Файл не содержит числовых данных для построения графика')
+            return redirect('visualization')
+
+        # Создаем datasets для всех числовых столбцов
+        datasets = []
+        for col in numeric_cols:
+            datasets.append({
+                'label': col,
+                'data': df[col].tolist()
+            })
+
+        # Используем первый нечисловой столбец как labels или индекс
+        label_column = non_numeric_cols[0] if non_numeric_cols else None
+        labels = df[label_column].astype(str).tolist() if label_column else df.index.astype(str).tolist()
+
+        chart_data = {
+            'labels': labels,
+            'datasets': datasets
+        }
 
         context = {
             'file_id': file_id,
             'file_name': file_record.original_filename,
-            'data': data,
+            'data': df.to_dict('records'),
             'columns': df.columns.tolist(),
-            'chart_data': chart_data,
+            'chart_data': json.dumps(chart_data, ensure_ascii=False),
             'chart_type': 'bar',
             'user_files': UploadedFile.objects.filter(user=request.user).order_by('-upload_date')
         }
