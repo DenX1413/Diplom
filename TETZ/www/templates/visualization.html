@@ -6,7 +6,6 @@
 <link href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
 
-
 <style>
     /* Toastr notifications */
     .toast {
@@ -56,6 +55,42 @@
     }
     .file-list-item:hover .file-actions {
         opacity: 1;
+    }
+    /* Color picker styles */
+    .color-picker-container {
+        display: flex;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+    .color-picker-label {
+        margin-right: 10px;
+        min-width: 120px;
+    }
+    .color-picker {
+        width: 50px;
+        height: 30px;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    .color-palette {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 5px;
+    }
+    .color-option {
+        width: 25px;
+        height: 25px;
+        border-radius: 50%;
+        cursor: pointer;
+        border: 2px solid transparent;
+    }
+    .color-option.selected {
+        border-color: #000;
+    }
+    .palette-btn {
+        margin-bottom: 5px;
     }
 </style>
 
@@ -156,6 +191,9 @@
                             <button class="btn btn-sm btn-light me-2" id="saveVizBtn" {% if not data %}disabled{% endif %}>
                                 <i class="fas fa-save"></i> Сохранить
                             </button>
+                            <button class="btn btn-sm btn-light me-2" id="colorSettingsBtn" {% if not data %}disabled{% endif %}>
+                                <i class="fas fa-palette"></i> Цвета
+                            </button>
                             <div class="btn-group">
                                 <button class="btn btn-sm btn-light dropdown-toggle" type="button"
                                         data-bs-toggle="dropdown" aria-expanded="false" {% if not data %}disabled{% endif %}>
@@ -173,34 +211,27 @@
 
                     <div class="card-body">
                         {% if data %}
-
                             <!-- График -->
                             <div class="chart-container">
                                 <canvas id="mainChart"></canvas>
                             </div>
-                            <script src="{% static 'www/js/chart.min.js' %}"></script>
-                            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-                            <!-- Модальное окно для выбора цвета -->
-                            <div class="modal fade" id="colorPickerModal" tabindex="-1" aria-hidden="true">
-                                <div class="modal-dialog">
-                                    <div class="modal-content">
-                                        <div class="modal-header">
-                                            <h5 class="modal-title">Изменить цвет</h5>
-                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                        </div>
-                                        <div class="modal-body">
-                                            <div class="form-group">
-                                                <label for="datasetColorPicker">Выберите новый цвет:</label>
-                                                <input type="color" class="form-control form-control-color" id="datasetColorPicker" value="#4bc0c0">
-                                            </div>
-                                        </div>
-                                        <div class="modal-footer">
-                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                                            <button type="button" class="btn btn-primary" id="confirmColorChange">Применить</button>
-                                        </div>
+
+                            <!-- Настройки цветов (скрыто по умолчанию) -->
+                            <div id="colorSettingsPanel" style="display: none; margin-top: 20px;">
+                                <div class="card">
+                                    <div class="card-header bg-light">
+                                        <h5 class="mb-0">Настройка цветов</h5>
+                                    </div>
+                                    <div class="card-body" id="colorControls">
+                                        <!-- Здесь будут динамически добавляться элементы управления цветом -->
+                                    </div>
+                                    <div class="card-footer">
+                                        <button class="btn btn-primary" id="applyColorsBtn">Применить цвета</button>
+                                        <button class="btn btn-secondary ms-2" id="resetColorsBtn">Сбросить</button>
                                     </div>
                                 </div>
                             </div>
+
                             <!-- Таблица данных -->
                             <div class="mt-4">
                                 <div class="table-responsive">
@@ -281,7 +312,8 @@
     {% endif %}
 </div>
 
-
+<script src="{% static 'www/js/chart.min.js' %}"></script>
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script>
 $(document).ready(function() {
     // Инициализация переменных
@@ -289,8 +321,7 @@ $(document).ready(function() {
     const rawChartData = {{ chart_data|safe }};
     const initialChartType = '{{ chart_type|default:"bar" }}';
     let customColors = {}; // Хранит пользовательские цвета
-
-    console.log("Raw chart data:", rawChartData);
+    let colorPickerActive = false; // Флаг активности палитры цветов
 
     // Парсим данные
     let chartData;
@@ -306,6 +337,51 @@ $(document).ready(function() {
         console.error("Error parsing chart data:", e);
         chartData = { labels: [], datasets: [] };
     }
+
+    // Цветовая палитра по умолчанию
+    const defaultColorPalette = [
+        'rgba(255, 99, 132, 0.7)',    // Красный
+        'rgba(54, 162, 235, 0.7)',    // Синий
+        'rgba(255, 206, 86, 0.7)',    // Желтый
+        'rgba(75, 192, 192, 0.7)',    // Зеленый
+        'rgba(153, 102, 255, 0.7)',   // Фиолетовый
+        'rgba(255, 159, 64, 0.7)',    // Оранжевый
+        'rgba(199, 199, 199, 0.7)',   // Серый
+        'rgba(83, 102, 255, 0.7)',    // Индиго
+        'rgba(40, 167, 69, 0.7)',     // Зеленый (другой)
+        'rgba(108, 117, 125, 0.7)',   // Серый (другой)
+        'rgba(220, 53, 69, 0.7)',     // Красный (яркий)
+        'rgba(253, 126, 20, 0.7)'     // Оранжевый (яркий)
+    ];
+
+    // Предопределенные палитры цветов
+    const colorPalettes = {
+        default: defaultColorPalette,
+        vibrant: [
+            'rgba(255, 0, 0, 0.7)',
+            'rgba(0, 255, 0, 0.7)',
+            'rgba(0, 0, 255, 0.7)',
+            'rgba(255, 255, 0, 0.7)',
+            'rgba(0, 255, 255, 0.7)',
+            'rgba(255, 0, 255, 0.7)'
+        ],
+        pastel: [
+            'rgba(255, 182, 193, 0.7)',
+            'rgba(173, 216, 230, 0.7)',
+            'rgba(144, 238, 144, 0.7)',
+            'rgba(255, 228, 181, 0.7)',
+            'rgba(221, 160, 221, 0.7)',
+            'rgba(152, 251, 152, 0.7)'
+        ],
+        earth: [
+            'rgba(139, 69, 19, 0.7)',
+            'rgba(107, 142, 35, 0.7)',
+            'rgba(210, 180, 140, 0.7)',
+            'rgba(34, 139, 34, 0.7)',
+            'rgba(160, 82, 45, 0.7)',
+            'rgba(0, 100, 0, 0.7)'
+        ]
+    };
 
     // Инициализация графика при загрузке страницы
     if (chartData.labels.length > 0 && chartData.datasets.length > 0) {
@@ -336,38 +412,33 @@ $(document).ready(function() {
             currentChart = null;
         }
 
-        // Цветовая палитра по умолчанию
-        const defaultColors = {
-            'Укомплектован (%)': 'rgba(75, 192, 192, 0.7)',      // Зеленый
-            'Частично укомплектован (%)': 'rgba(255, 206, 86, 0.7)', // Желтый
-            'Нет в наличие (%)': 'rgba(255, 99, 132, 0.7)',      // Красный
-            'default': 'rgba(153, 102, 255, 0.7)'                // Фиолетовый
-        };
-
-        // Объединяем цвета по умолчанию с пользовательскими
-        const colorPalette = {...defaultColors, ...customColors};
-
         // Подготовка данных для Chart.js
         const datasets = data.datasets.map((dataset, i) => {
             // Для круговых/кольцевых диаграмм - разный цвет для каждого значения
             if (chartType === 'pie' || chartType === 'doughnut') {
+                const colors = dataset.data.map((_, idx) => {
+                    const colorKey = `${dataset.label}_${idx}`;
+                    return customColors[colorKey] || defaultColorPalette[idx % defaultColorPalette.length];
+                });
+
                 return {
                     label: dataset.label,
-                    data: dataset.data.map(val => typeof val === 'string' ? parseFloat(val.replace(/\s|,/g, '')) || 0 : val),
-                    backgroundColor: dataset.data.map((_, idx) =>
-                        colorPalette[dataset.label] || colorPalette['default']),
-                    borderColor: dataset.data.map((_, idx) =>
-                        colorPalette[dataset.label] || colorPalette['default']),
+                    data: dataset.data.map(val => typeof val === 'string' ? parseFloat(val.replace(/\s/g, '')) || 0 : val),
+                    backgroundColor: colors,
+                    borderColor: colors,
                     borderWidth: 1
                 };
             }
 
-            // Для других типов графиков
+            // Для других типов - один цвет на весь набор данных
+            const colorKey = dataset.label;
+            const color = customColors[colorKey] || defaultColorPalette[i % defaultColorPalette.length];
+
             return {
                 label: dataset.label,
-                data: dataset.data.map(val => typeof val === 'string' ? parseFloat(val.replace(/\s|,/g, '')) || 0 : val),
-                backgroundColor: colorPalette[dataset.label] || colorPalette['default'],
-                borderColor: colorPalette[dataset.label] || colorPalette['default'],
+                data: dataset.data.map(val => typeof val === 'string' ? parseFloat(val.replace(/\s/g, '')) || 0 : val),
+                backgroundColor: color,
+                borderColor: color,
                 borderWidth: 1
             };
         });
@@ -379,7 +450,6 @@ $(document).ready(function() {
             plugins: {
                 title: {
                     display: true,
-                    text: 'Статус комплектации',
                     font: {
                         size: 16
                     }
@@ -402,8 +472,12 @@ $(document).ready(function() {
                             if (label) {
                                 label += ': ';
                             }
-                            const value = context.parsed.y !== undefined ? context.parsed.y : context.raw;
-                            return label + value.toLocaleString() + '%';
+                            if (context.parsed.y !== undefined) {
+                                label += context.parsed.y.toLocaleString();
+                            } else {
+                                label += context.raw.toLocaleString();
+                            }
+                            return label;
                         }
                     }
                 }
@@ -411,10 +485,9 @@ $(document).ready(function() {
             scales: chartType === 'pie' || chartType === 'doughnut' ? {} : {
                 y: {
                     beginAtZero: true,
-                    max: 100,
                     ticks: {
                         callback: function(value) {
-                            return value + '%';
+                            return value.toLocaleString();
                         }
                     },
                     grid: {
@@ -445,46 +518,193 @@ $(document).ready(function() {
             options: options
         });
 
-        // Добавляем контекстное меню для изменения цветов
-        $('#mainChart').off('contextmenu').on('contextmenu', function(e) {
-            e.preventDefault();
-            const activePoints = currentChart.getElementsAtEventForMode(e, 'nearest', {intersect: true}, false);
+        // Обновляем панель цветов при изменении типа графика
+        if (colorPickerActive) {
+            updateColorControls(chartType);
+        }
+    }
 
-            if (activePoints.length > 0) {
-                const datasetIndex = activePoints[0].datasetIndex;
-                const datasetLabel = currentChart.data.datasets[datasetIndex].label;
+    // Функция для обновления элементов управления цветом
+    function updateColorControls(chartType) {
+        const colorControls = $('#colorControls');
+        colorControls.empty();
 
-                // Показываем модальное окно для выбора цвета
-                $('#colorPickerModal').data('dataset', datasetLabel);
-                $('#colorPickerModal').modal('show');
+        if (!currentChart || !chartData.datasets.length) return;
+
+        if (chartType === 'pie' || chartType === 'doughnut') {
+            // Для круговых диаграмм - цвет для каждого значения каждого набора данных
+            chartData.datasets.forEach(dataset => {
+                dataset.data.forEach((_, idx) => {
+                    const colorKey = `${dataset.label}_${idx}`;
+                    const currentColor = customColors[colorKey] || defaultColorPalette[idx % defaultColorPalette.length];
+
+                    const controlId = `color-${colorKey.replace(/\s+/g, '-')}`;
+
+                    const controlHtml = `
+                        <div class="color-picker-container">
+                            <label class="color-picker-label">${dataset.label} (${chartData.labels[idx]})</label>
+                            <input type="color" class="color-picker" id="${controlId}" value="${rgbToHex(currentColor)}">
+                            <div class="color-palette">
+                                ${defaultColorPalette.map((color, i) => `
+                                    <div class="color-option ${currentColor === color ? 'selected' : ''}"
+                                         style="background-color: ${color}"
+                                         data-color="${color}"
+                                         data-key="${colorKey}"></div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+
+                    colorControls.append(controlHtml);
+                });
+            });
+        } else {
+            // Для других типов - цвет для каждого набора данных
+            chartData.datasets.forEach((dataset, i) => {
+                const colorKey = dataset.label;
+                const currentColor = customColors[colorKey] || defaultColorPalette[i % defaultColorPalette.length];
+
+                const controlId = `color-${colorKey.replace(/\s+/g, '-')}`;
+
+                const controlHtml = `
+                    <div class="color-picker-container">
+                        <label class="color-picker-label">${dataset.label}</label>
+                        <input type="color" class="color-picker" id="${controlId}" value="${rgbToHex(currentColor)}">
+                        <div class="color-palette">
+                            ${defaultColorPalette.map((color, j) => `
+                                <div class="color-option ${currentColor === color ? 'selected' : ''}"
+                                     style="background-color: ${color}"
+                                     data-color="${color}"
+                                     data-key="${colorKey}"></div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+
+                colorControls.append(controlHtml);
+            });
+        }
+
+        // Добавляем выбор палитры
+        const paletteHtml = `
+            <div class="mb-3">
+                <label class="form-label">Предустановленные палитры:</label>
+                <div class="d-flex flex-wrap gap-2">
+                    ${Object.entries(colorPalettes).map(([name, palette]) => `
+                        <button class="btn btn-sm btn-outline-secondary palette-btn" data-palette="${name}">
+                            ${name.charAt(0).toUpperCase() + name.slice(1)}
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+        colorControls.prepend(paletteHtml);
+
+        // Обработчики событий для выбора цвета
+        $('.color-picker').on('change', function() {
+            const colorKey = $(this).attr('id').replace('color-', '').replace(/-/g, ' ');
+            const newColor = hexToRgba($(this).val(), 0.7);
+            customColors[colorKey] = newColor;
+
+            // Обновляем выбранный цвет в палитре
+            $(`.color-option[data-key="${colorKey}"]`).removeClass('selected');
+        });
+
+        $('.color-option').on('click', function() {
+            const color = $(this).data('color');
+            const colorKey = $(this).data('key');
+
+            customColors[colorKey] = color;
+
+            // Обновляем input и выделение в палитре
+            $(`#color-${colorKey.replace(/\s+/g, '-')}`).val(rgbToHex(color));
+            $(`.color-option[data-key="${colorKey}"]`).removeClass('selected');
+            $(this).addClass('selected');
+        });
+
+        // Обработчики для предустановленных палитр
+        $('.palette-btn').on('click', function() {
+            const paletteName = $(this).data('palette');
+            const palette = colorPalettes[paletteName];
+
+            if (currentChart.config.type === 'pie' || currentChart.config.type === 'doughnut') {
+                // Для круговых диаграмм
+                chartData.datasets.forEach((dataset, i) => {
+                    dataset.data.forEach((_, idx) => {
+                        const colorKey = `${dataset.label}_${idx}`;
+                        customColors[colorKey] = palette[idx % palette.length];
+                    });
+                });
+            } else {
+                // Для других типов
+                chartData.datasets.forEach((dataset, i) => {
+                    const colorKey = dataset.label;
+                    customColors[colorKey] = palette[i % palette.length];
+                });
             }
+
+            // Перерисовываем график и обновляем элементы управления
+            renderChart(currentChart.config.type, chartData);
+            updateColorControls(currentChart.config.type);
         });
     }
 
-    // Инициализация color picker
-    $('#datasetColorPicker').on('change', function() {
-        const color = $(this).val();
-        const datasetLabel = $('#colorPickerModal').data('dataset');
+    // Функция для преобразования HEX в RGBA
+    function hexToRgba(hex, alpha) {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
 
-        // Сохраняем пользовательский цвет
-        customColors[datasetLabel] = hexToRgba(color, 0.7);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
 
-        // Перерисовываем график
-        const currentType = currentChart.config.type;
-        renderChart(currentType, chartData);
+    // Функция для преобразования RGBA в HEX
+    function rgbToHex(rgba) {
+        // Извлекаем значения RGB из строки rgba
+        const rgb = rgba.match(/^rgba?[\s+]?\([\s+]?(\d+)[\s+]?,[\s+]?(\d+)[\s+]?,[\s+]?(\d+)[\s+]?/i);
 
-        $('#colorPickerModal').modal('hide');
-        toastr.success(`Цвет для "${datasetLabel}" изменен`, 'Успешно');
+        if (!rgb) return '#000000';
+
+        const r = parseInt(rgb[1]);
+        const g = parseInt(rgb[2]);
+        const b = parseInt(rgb[3]);
+
+        return '#' +
+            ('0' + r.toString(16)).slice(-2) +
+            ('0' + g.toString(16)).slice(-2) +
+            ('0' + b.toString(16)).slice(-2);
+    }
+
+    // Обработчик кнопки настроек цветов
+    $('#colorSettingsBtn').on('click', function() {
+        const panel = $('#colorSettingsPanel');
+        if (panel.is(':visible')) {
+            panel.hide();
+            colorPickerActive = false;
+        } else {
+            panel.show();
+            colorPickerActive = true;
+            updateColorControls(currentChart ? currentChart.config.type : initialChartType);
+        }
     });
 
-    // Функция преобразования HEX в RGBA
-    function hexToRgba(hex, opacity) {
-        hex = hex.replace('#', '');
-        const r = parseInt(hex.substring(0, 2), 16);
-        const g = parseInt(hex.substring(2, 4), 16);
-        const b = parseInt(hex.substring(4, 6), 16);
-        return `rgba(${r}, ${g}, ${b}, ${opacity})`;
-    }
+    // Обработчик кнопки применения цветов
+    $('#applyColorsBtn').on('click', function() {
+        if (currentChart) {
+            renderChart(currentChart.config.type, chartData);
+            toastr.success('Цвета применены', 'Успешно');
+        }
+    });
+
+    // Обработчик кнопки сброса цветов
+    $('#resetColorsBtn').on('click', function() {
+        customColors = {};
+        if (currentChart) {
+            renderChart(currentChart.config.type, chartData);
+            updateColorControls(currentChart.config.type);
+            toastr.success('Цвета сброшены', 'Успешно');
+        }
+    });
 
     // Обработчик кнопки экспорта
     $('#exportBtn').on('click', function() {
