@@ -5,58 +5,52 @@ from typing import Dict, List
 class MxlParser:
     @staticmethod
     def parse(mxl_content: str) -> Dict:
-        """Расширенный парсер MXL-файлов 1С"""
-
-        def clean_number(num_str: str) -> int:
-            """Очищает число от форматирования"""
-            try:
-                return int(num_str.replace('\u00a0', '').replace(' ', ''))
-            except:
-                return 0
-
+        """Парсер для MXL-файлов нового формата"""
         result = {
             'metadata': {},
             'components': [],
             'complectation_status': {}
         }
 
-        # Парсинг метаданных
-        if header := re.search(r'\{"#","(.+?)"\}', mxl_content):
-            result['metadata']['title'] = header.group(1)
-            if date := re.search(r'на (\d{2}\.\d{2}\.\d{4})', header.group(1)):
-                result['metadata']['date'] = date.group(1)
+        # Разделяем файл на строки
+        lines = [line.strip() for line in mxl_content.split('\n') if line.strip()]
 
-        # Парсинг компонентов
-        component_pattern = re.compile(
-            r'\{"#","(.+?)"\}.*?'  # Наименование
-            r'\{"#","(.+?)"\}.*?'  # Требуется
-            r'\{"#","(.+?)"\}'  # Доступно
-        )
+        current_section = None
 
-        for match in component_pattern.finditer(mxl_content):
-            name, req, avail = match.groups()
-            req_num = clean_number(req)
-            avail_num = clean_number(avail)
+        for line in lines:
+            # Определяем секции
+            if line.startswith('{"') and '"}' in line:
+                key_value = line[2:-2].split('","')
+                if len(key_value) == 1:
+                    # Это заголовок секции
+                    current_section = key_value[0]
+                    result['metadata'][current_section] = {}
+                elif len(key_value) == 2:
+                    key, value = key_value
+                    if current_section:
+                        # Добавляем в текущую секцию
+                        if current_section not in result:
+                            result[current_section] = {}
+                        result[current_section][key] = value
+                    else:
+                        # Простое ключ-значение
+                        result['metadata'][key] = value
 
+        # Преобразуем данные в нужный формат
+        if 'СТАТОР' in result:
             result['components'].append({
-                'component': name,
-                'required': req_num,
-                'available': avail_num,
-                'deficit': max(0, req_num - avail_num)
+                'component': 'СТАТОР',
+                'Укомплектован': result['СТАТОР'].get('Укомплектован', '0'),
+                'Частично укомплектован': result['СТАТОР'].get('Частично укомплектован', '0'),
+                'Нет в наличие': result['СТАТОР'].get('Нет в наличие', '0')
             })
 
-        # Парсинг статуса комплектации
-        status_pattern = re.compile(
-            r'\{"#","(.+?)%"\}.*?'  # Укомплектовано
-            r'\{"#","(.+?)%"\}.*?'  # Частично
-            r'\{"#","(.+?)%"\}'  # Отсутствует
-        )
-
-        if status_match := status_pattern.search(mxl_content):
-            result['complectation_status'] = {
-                'completed': status_match.group(1),
-                'partial': status_match.group(2),
-                'missing': status_match.group(3)
-            }
+        if 'УПАКОВКА на 2 изделия' in result:
+            result['components'].append({
+                'component': 'УПАКОВКА на 2 изделия',
+                'Укомплектован': result['УПАКОВКА на 2 изделия'].get('Укомплектован', '0'),
+                'Частично укомплектован': result['УПАКОВКА на 2 изделия'].get('Частично укомплектован', '0'),
+                'Нет в наличие': result['УПАКОВКА на 2 изделия'].get('Нет в наличие', '0')
+            })
 
         return result

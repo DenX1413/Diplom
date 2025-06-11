@@ -448,87 +448,128 @@ def visualization_data(request, file_id):
         file_record = UploadedFile.objects.get(file_id=file_id, user=request.user)
         file_path = os.path.join(settings.MEDIA_ROOT, 'uploads', file_record.stored_filename)
 
-        # Чтение файла с учетом типа
-        if file_record.file_type == 'xlsx':
+        # Обработка разных типов файлов
+        if file_record.file_type == 'mxl':
+            return process_mxl_file(request, file_path, file_record)
+        elif file_record.file_type == 'xlsx':
             df = pd.read_excel(file_path, engine='openpyxl')
+            return process_standard_file(request, file_record, df)
         elif file_record.file_type == 'csv':
-            # Пробуем определить разделитель автоматически
-            try:
-                # Сначала пробуем с разделителем точка с запятой
-                df = pd.read_csv(file_path, sep=';', thousands=' ', encoding='utf-8-sig')
-                # Если получилась только одна колонка, пробуем запятую
-                if len(df.columns) == 1:
-                    df = pd.read_csv(file_path, sep=',', thousands=' ', encoding='utf-8-sig')
-            except Exception as e:
-                print(f"Error reading CSV: {str(e)}")
-                return redirect('visualization')
+            df = pd.read_csv(file_path, sep=';', thousands=' ', encoding='utf-8-sig')
+            return process_standard_file(request, file_record, df)
 
-        # Очистка данных: удаление пробелов в числах и преобразование в числовой формат
-        for col in df.columns:
-            if df[col].dtype == 'object':
-                # Удаляем пробелы в числах и неразрывные пробелы
-                df[col] = df[col].str.replace(r'[\s\xa0]', '', regex=True)
-                # Пробуем преобразовать в числа
-                try:
-                    df[col] = pd.to_numeric(df[col])
-                except:
-                    pass  # Оставляем как строку, если не число
-
-        # Проверяем, что у нас есть данные
-        if df.empty:
-            messages.error(request, 'Файл не содержит данных')
+        else:
+            messages.error(request, 'Неподдерживаемый формат файла')
             return redirect('visualization')
 
-        # Подготовка данных для графика
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        non_numeric_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+    except Exception as e:
+        messages.error(request, f'Ошибка обработки файла: {str(e)}')
+        return redirect('visualization')
 
-        # Если нет числовых колонок, пытаемся найти числа в строках
-        if not numeric_cols and non_numeric_cols:
-            # Пробуем преобразовать первую строковую колонку в числа
+def process_standard_file(request, file_record, df):
+    """Обработка стандартных файлов (CSV, Excel)"""
+    # Очистка данных
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = df[col].str.replace(r'[\s\xa0]', '', regex=True)
             try:
-                df[non_numeric_cols[0]] = pd.to_numeric(df[non_numeric_cols[0]].str.replace(r'[\s\xa0]', '', regex=True))
-                numeric_cols = [non_numeric_cols[0]]
-                non_numeric_cols = non_numeric_cols[1:]
+                df[col] = pd.to_numeric(df[col])
             except:
                 pass
 
-        # Если все еще нет числовых данных, показываем ошибку
-        if not numeric_cols:
-            messages.error(request, 'Файл не содержит числовых данных для построения графика')
-            return redirect('visualization')
+    # Проверка данных
+    if df.empty:
+        messages.error(request, 'Файл не содержит данных')
+        return redirect('visualization')
 
-        # Создаем datasets для всех числовых столбцов
-        datasets = []
-        for col in numeric_cols:
-            datasets.append({
-                'label': col,
-                'data': df[col].tolist()
-            })
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    non_numeric_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
 
-        # Используем первый нечисловой столбец как labels или индекс
-        label_column = non_numeric_cols[0] if non_numeric_cols else None
-        labels = df[label_column].astype(str).tolist() if label_column else df.index.astype(str).tolist()
+    if not numeric_cols:
+        messages.error(request, 'Файл не содержит числовых данных')
+        return redirect('visualization')
 
-        chart_data = {
+    # Подготовка данных для графика
+    datasets = [{
+        'label': col,
+        'data': df[col].tolist()
+    } for col in numeric_cols]
+
+    label_column = non_numeric_cols[0] if non_numeric_cols else None
+    labels = df[label_column].astype(str).tolist() if label_column else df.index.astype(str).tolist()
+
+    context = {
+        'file_id': file_record.file_id,
+        'file_name': file_record.original_filename,
+        'data': df.to_dict('records'),
+        'columns': df.columns.tolist(),
+        'chart_data': json.dumps({
             'labels': labels,
             'datasets': datasets
+        }, ensure_ascii=False),
+        'chart_type': 'bar',
+        'user_files': UploadedFile.objects.filter(user=request.user).order_by('-upload_date')
+    }
+    return render(request, 'visualization.html', context)
+
+def process_mxl_file(request, file_path, file_record):
+    """Обработка MXL файлов нового формата"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        parser = MxlParser()
+        parsed_data = parser.parse(content)
+
+        # Подготовка данных для графика
+        chart_data = {
+            'labels': [item['component'] for item in parsed_data['components']],
+            'datasets': [
+                {
+                    'label': 'Укомплектован (%)',
+                    'data': [float(item['Укомплектован'].replace(',', '.')) for item in parsed_data['components']],
+                    'backgroundColor': 'rgba(75, 192, 192, 0.7)'
+                },
+                {
+                    'label': 'Частично укомплектован (%)',
+                    'data': [float(item['Частично укомплектован'].replace(',', '.')) for item in parsed_data['components']],
+                    'backgroundColor': 'rgba(255, 206, 86, 0.7)'
+                },
+                {
+                    'label': 'Нет в наличие (%)',
+                    'data': [float(item['Нет в наличие'].replace(',', '.')) for item in parsed_data['components']],
+                    'backgroundColor': 'rgba(255, 99, 132, 0.7)'
+                }
+            ]
         }
 
+        # Подготовка данных для таблицы
+        table_data = []
+        for item in parsed_data['components']:
+            table_data.append({
+                'Компонент': item['component'],
+                'Укомплектован (%)': item['Укомплектован'],
+                'Частично укомплектован (%)': item['Частично укомплектован'],
+                'Нет в наличие (%)': item['Нет в наличие']
+            })
+
         context = {
-            'file_id': file_id,
+            'file_id': file_record.file_id,
             'file_name': file_record.original_filename,
-            'data': df.to_dict('records'),
-            'columns': df.columns.tolist(),
+            'data': table_data,
+            'columns': ['Компонент', 'Укомплектован (%)', 'Частично укомплектован (%)', 'Нет в наличие (%)'],
             'chart_data': json.dumps(chart_data, ensure_ascii=False),
             'chart_type': 'bar',
+            'is_mxl': True,
             'user_files': UploadedFile.objects.filter(user=request.user).order_by('-upload_date')
         }
 
         return render(request, 'visualization.html', context)
+
     except Exception as e:
-        messages.error(request, f'Ошибка обработки файла: {str(e)}')
+        messages.error(request, f'Ошибка обработки MXL файла: {str(e)}')
         return redirect('visualization')
+
 
 def process_funnel_data(df):
     # Обработка данных воронки продаж

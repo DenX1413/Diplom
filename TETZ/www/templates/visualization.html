@@ -24,7 +24,19 @@
     .toast-warning {
         background-color: #ffc107 !important;
     }
-
+    .mxl-status {
+        background-color: #f8f9fa;
+        border-radius: 5px;
+        padding: 15px;
+        margin-top: 20px;
+    }
+    .mxl-status h5 {
+        color: #0d6efd;
+        margin-bottom: 10px;
+    }
+    .mxl-status p {
+        margin-bottom: 5px;
+    }
     /* Custom styles */
     .chart-container {
         position: relative;
@@ -168,7 +180,27 @@
                             </div>
                             <script src="{% static 'www/js/chart.min.js' %}"></script>
                             <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-
+                            <!-- Модальное окно для выбора цвета -->
+                            <div class="modal fade" id="colorPickerModal" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">Изменить цвет</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="form-group">
+                                                <label for="datasetColorPicker">Выберите новый цвет:</label>
+                                                <input type="color" class="form-control form-control-color" id="datasetColorPicker" value="#4bc0c0">
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                                            <button type="button" class="btn btn-primary" id="confirmColorChange">Применить</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                             <!-- Таблица данных -->
                             <div class="mt-4">
                                 <div class="table-responsive">
@@ -256,6 +288,7 @@ $(document).ready(function() {
     let currentChart = null;
     const rawChartData = {{ chart_data|safe }};
     const initialChartType = '{{ chart_type|default:"bar" }}';
+    let customColors = {}; // Хранит пользовательские цвета
 
     console.log("Raw chart data:", rawChartData);
 
@@ -303,21 +336,16 @@ $(document).ready(function() {
             currentChart = null;
         }
 
-        // Расширенная цветовая палитра (12 цветов)
-        const colorPalette = [
-            'rgba(255, 99, 132, 0.7)',    // Красный
-            'rgba(54, 162, 235, 0.7)',    // Синий
-            'rgba(255, 206, 86, 0.7)',    // Желтый
-            'rgba(75, 192, 192, 0.7)',    // Зеленый
-            'rgba(153, 102, 255, 0.7)',   // Фиолетовый
-            'rgba(255, 159, 64, 0.7)',    // Оранжевый
-            'rgba(199, 199, 199, 0.7)',   // Серый
-            'rgba(83, 102, 255, 0.7)',    // Индиго
-            'rgba(40, 167, 69, 0.7)',     // Зеленый (другой)
-            'rgba(108, 117, 125, 0.7)',   // Серый (другой)
-            'rgba(220, 53, 69, 0.7)',     // Красный (яркий)
-            'rgba(253, 126, 20, 0.7)'     // Оранжевый (яркий)
-        ];
+        // Цветовая палитра по умолчанию
+        const defaultColors = {
+            'Укомплектован (%)': 'rgba(75, 192, 192, 0.7)',      // Зеленый
+            'Частично укомплектован (%)': 'rgba(255, 206, 86, 0.7)', // Желтый
+            'Нет в наличие (%)': 'rgba(255, 99, 132, 0.7)',      // Красный
+            'default': 'rgba(153, 102, 255, 0.7)'                // Фиолетовый
+        };
+
+        // Объединяем цвета по умолчанию с пользовательскими
+        const colorPalette = {...defaultColors, ...customColors};
 
         // Подготовка данных для Chart.js
         const datasets = data.datasets.map((dataset, i) => {
@@ -325,18 +353,21 @@ $(document).ready(function() {
             if (chartType === 'pie' || chartType === 'doughnut') {
                 return {
                     label: dataset.label,
-                    data: dataset.data.map(val => typeof val === 'string' ? parseFloat(val.replace(/\s/g, '')) || 0 : val),
-                    backgroundColor: dataset.data.map((_, idx) => colorPalette[idx % colorPalette.length]),
-                    borderColor: dataset.data.map((_, idx) => colorPalette[idx % colorPalette.length]),
+                    data: dataset.data.map(val => typeof val === 'string' ? parseFloat(val.replace(/\s|,/g, '')) || 0 : val),
+                    backgroundColor: dataset.data.map((_, idx) =>
+                        colorPalette[dataset.label] || colorPalette['default']),
+                    borderColor: dataset.data.map((_, idx) =>
+                        colorPalette[dataset.label] || colorPalette['default']),
                     borderWidth: 1
                 };
             }
-            // Для других типов - один цвет на весь набор данных
+
+            // Для других типов графиков
             return {
                 label: dataset.label,
-                data: dataset.data.map(val => typeof val === 'string' ? parseFloat(val.replace(/\s/g, '')) || 0 : val),
-                backgroundColor: colorPalette[i % colorPalette.length],
-                borderColor: colorPalette[i % colorPalette.length],
+                data: dataset.data.map(val => typeof val === 'string' ? parseFloat(val.replace(/\s|,/g, '')) || 0 : val),
+                backgroundColor: colorPalette[dataset.label] || colorPalette['default'],
+                borderColor: colorPalette[dataset.label] || colorPalette['default'],
                 borderWidth: 1
             };
         });
@@ -348,6 +379,7 @@ $(document).ready(function() {
             plugins: {
                 title: {
                     display: true,
+                    text: 'Статус комплектации',
                     font: {
                         size: 16
                     }
@@ -370,12 +402,8 @@ $(document).ready(function() {
                             if (label) {
                                 label += ': ';
                             }
-                            if (context.parsed.y !== undefined) {
-                                label += context.parsed.y.toLocaleString();
-                            } else {
-                                label += context.raw.toLocaleString();
-                            }
-                            return label;
+                            const value = context.parsed.y !== undefined ? context.parsed.y : context.raw;
+                            return label + value.toLocaleString() + '%';
                         }
                     }
                 }
@@ -383,9 +411,10 @@ $(document).ready(function() {
             scales: chartType === 'pie' || chartType === 'doughnut' ? {} : {
                 y: {
                     beginAtZero: true,
+                    max: 100,
                     ticks: {
                         callback: function(value) {
-                            return value.toLocaleString();
+                            return value + '%';
                         }
                     },
                     grid: {
@@ -415,6 +444,46 @@ $(document).ready(function() {
             },
             options: options
         });
+
+        // Добавляем контекстное меню для изменения цветов
+        $('#mainChart').off('contextmenu').on('contextmenu', function(e) {
+            e.preventDefault();
+            const activePoints = currentChart.getElementsAtEventForMode(e, 'nearest', {intersect: true}, false);
+
+            if (activePoints.length > 0) {
+                const datasetIndex = activePoints[0].datasetIndex;
+                const datasetLabel = currentChart.data.datasets[datasetIndex].label;
+
+                // Показываем модальное окно для выбора цвета
+                $('#colorPickerModal').data('dataset', datasetLabel);
+                $('#colorPickerModal').modal('show');
+            }
+        });
+    }
+
+    // Инициализация color picker
+    $('#datasetColorPicker').on('change', function() {
+        const color = $(this).val();
+        const datasetLabel = $('#colorPickerModal').data('dataset');
+
+        // Сохраняем пользовательский цвет
+        customColors[datasetLabel] = hexToRgba(color, 0.7);
+
+        // Перерисовываем график
+        const currentType = currentChart.config.type;
+        renderChart(currentType, chartData);
+
+        $('#colorPickerModal').modal('hide');
+        toastr.success(`Цвет для "${datasetLabel}" изменен`, 'Успешно');
+    });
+
+    // Функция преобразования HEX в RGBA
+    function hexToRgba(hex, opacity) {
+        hex = hex.replace('#', '');
+        const r = parseInt(hex.substring(0, 2), 16);
+        const g = parseInt(hex.substring(2, 4), 16);
+        const b = parseInt(hex.substring(4, 6), 16);
+        return `rgba(${r}, ${g}, ${b}, ${opacity})`;
     }
 
     // Обработчик кнопки экспорта
