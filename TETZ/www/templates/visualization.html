@@ -2,10 +2,11 @@
 {% load static %}
 
 {% block title %}Визуализация данных{% endblock %}
-
 {% block content %}
 <link href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
+
+
 <style>
     /* Toastr notifications */
     .toast {
@@ -28,6 +29,7 @@
     .chart-container {
         position: relative;
         height: 400px;
+        width: 100%;
         margin-bottom: 20px;
     }
     .file-list-item {
@@ -159,30 +161,12 @@
 
                     <div class="card-body">
                         {% if data %}
-                            <!-- Фильтры и настройки -->
-                            <div class="row mb-4">
-                                <div class="col-md-6">
-                                    <label for="xAxisSelect" class="form-label">Ось X:</label>
-                                    <select class="form-select" id="xAxisSelect">
-                                        {% for column in columns %}
-                                            <option value="{{ forloop.counter0 }}">{{ column }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </div>
-                                <div class="col-md-6">
-                                    <label for="yAxisSelect" class="form-label">Ось Y:</label>
-                                    <select class="form-select" id="yAxisSelect">
-                                        {% for column in columns %}
-                                            <option value="{{ forloop.counter0 }}">{{ column }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </div>
-                            </div>
 
                             <!-- График -->
                             <div class="chart-container">
                                 <canvas id="mainChart"></canvas>
                             </div>
+                            <script src="{% static 'www/js/chart.min.js' %}"></script>
 
                             <!-- Таблица данных -->
                             <div class="mt-4">
@@ -266,20 +250,18 @@
 {% endblock %}
 
 {% block scripts %}
-<!-- Подключаем Chart.js для графиков -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
 
 <script>
-$(document).ready(function() {
+    $(document).ready(function() {
     // Инициализация переменных
     let currentChart = null;
-    const rawData = {{ data|safe|default:"[]" }};
-    const columns = {{ columns|safe|default:"[]" }};
+    const chartData = {{ chart_data|safe|default:"{}" }};
     const initialChartType = '{{ chart_type|default:"bar" }}';
 
+    console.log("Chart data:", chartData);
+
     // Инициализация графика при загрузке страницы
-    if (rawData.length > 0) {
+    if (chartData.labels && chartData.values) {
         renderChart(initialChartType);
     }
 
@@ -290,130 +272,101 @@ $(document).ready(function() {
         renderChart(chartType);
     });
 
-    // Обработчики изменения осей
-    $('#xAxisSelect, #yAxisSelect').change(function() {
-        if (currentChart) {
-            renderChart(currentChart.config.type);
-        }
-    });
-
     // Функция рендеринга графика
     function renderChart(chartType) {
-        const ctx = document.getElementById('mainChart').getContext('2d');
+        const ctx = document.getElementById('mainChart');
+        if (!ctx) {
+            console.error("Canvas element not found!");
+            return;
+        }
 
-        // Удаляем предыдущий график, если он есть
+        // Удаляем предыдущий график
         if (currentChart) {
             currentChart.destroy();
         }
 
-        // Получаем выбранные оси
-        const xAxisIndex = $('#xAxisSelect').val();
-        const yAxisIndex = $('#yAxisSelect').val();
-
-        // Подготавливаем данные
-        const labels = rawData.map(item => {
-            const key = columns[xAxisIndex];
-            return item[key];
+        // Подготовка данных
+        const labels = chartData.labels;
+        const values = chartData.values.map(val => {
+            // Преобразуем значения в числа
+            const num = parseFloat(val);
+            return isNaN(num) ? 0 : num;
         });
 
-        const datasetData = rawData.map(item => {
-            const key = columns[yAxisIndex];
-            return typeof item[key] === 'number' ? item[key] : parseFloat(item[key]) || 0;
-        });
-
-        // Создаем конфигурацию графика
-        const chartConfig = {
-            type: chartType,
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: columns[yAxisIndex],
-                    data: datasetData,
-                    backgroundColor: getChartColors(chartType, datasetData.length),
-                    borderColor: 'rgba(75, 192, 192, 1)',
-                    borderWidth: 1
-                }]
-            },
-            options: getChartOptions(chartType, columns[yAxisIndex])
-        };
-
-        // Создаем график
-        currentChart = new Chart(ctx, chartConfig);
-    }
-
-    // Функция для получения цветов графика
-    function getChartColors(chartType, dataLength) {
-        if (chartType === 'pie' || chartType === 'doughnut') {
-            const colors = [];
-            for (let i = 0; i < dataLength; i++) {
-                colors.push(getRandomColor());
-            }
-            return colors;
-        }
-        return 'rgba(54, 162, 235, 0.7)';
-    }
-
-    // Функция для получения настроек графика
-    function getChartOptions(chartType, label) {
-        const commonOptions = {
+        // Настройки для разных типов графиков
+        let chartOptions = {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    position: 'top',
-                },
                 title: {
                     display: true,
-                    text: label,
-                    font: {
-                        size: 16
-                    }
+                    text: `${chartData.value_column} по ${chartData.label_column}`
                 },
                 tooltip: {
                     callbacks: {
                         label: function(context) {
-                            let label = context.dataset.label || '';
-                            if (label) {
-                                label += ': ';
-                            }
-                            if (context.parsed.y !== undefined) {
-                                label += context.parsed.y;
-                            } else {
-                                label += context.parsed;
-                            }
-                            return label;
+                            return `${context.dataset.label}: ${context.raw}`;
                         }
                     }
                 }
             }
         };
 
+        // Специальные настройки для разных типов графиков
         if (chartType === 'bar') {
-            return {
-                ...commonOptions,
-                scales: {
-                    y: {
-                        beginAtZero: true
-                    }
-                }
+            chartOptions.indexAxis = 'y'; // Горизонтальные столбцы
+            chartOptions.scales = { x: { beginAtZero: true } };
+        } else if (chartType === 'line') {
+            chartOptions.scales = { y: { beginAtZero: true } };
+        } else if (chartType === 'pie' || chartType === 'doughnut') {
+            chartOptions.plugins.tooltip.callbacks.label = function(context) {
+                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                const percentage = Math.round((context.raw / total) * 100);
+                return `${context.label}: ${context.raw} (${percentage}%)`;
             };
         }
 
-        return commonOptions;
+        // Создаем график
+        currentChart = new Chart(ctx, {
+            type: chartType,
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: chartData.value_column,
+                    data: values,
+                    backgroundColor: getChartColors(chartType, values.length),
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: chartOptions
+        });
     }
 
-    // Функция для генерации случайного цвета
-    function getRandomColor() {
-        const r = Math.floor(Math.random() * 255);
-        const g = Math.floor(Math.random() * 255);
-        const b = Math.floor(Math.random() * 255);
-        return `rgba(${r}, ${g}, ${b}, 0.7)`;
-    }
+    // Функция для получения цветов графика
+    function getChartColors(chartType, dataLength) {
+        const colors = [];
+        const colorPalette = [
+            'rgba(255, 99, 132, 0.7)',
+            'rgba(54, 162, 235, 0.7)',
+            'rgba(255, 206, 86, 0.7)',
+            'rgba(75, 192, 192, 0.7)',
+            'rgba(153, 102, 255, 0.7)',
+            'rgba(255, 159, 64, 0.7)'
+        ];
 
-    // Обработчик кнопки сохранения
-    $('#saveVizBtn').click(function() {
-        $('#saveVizModal').modal('show');
-    });
+        if (chartType === 'pie' || chartType === 'doughnut') {
+            // Для круговых диаграмм - разные цвета для каждого элемента
+            for (let i = 0; i < dataLength; i++) {
+                colors.push(colorPalette[i % colorPalette.length]);
+            }
+        } else {
+            // Для других типов - один цвет
+            colors.push(colorPalette[0]);
+        }
+
+        return colors;
+    }
 
     // Обработчик кнопки экспорта
     $('#exportBtn').click(function() {
@@ -425,11 +378,6 @@ $(document).ready(function() {
         } else {
             toastr.warning('Нет данных для экспорта', 'Внимание');
         }
-    });
-
-    // Обработчик кнопки обновления
-    $('#refreshBtn').click(function() {
-        location.reload();
     });
 
     // Инициализация Toastr

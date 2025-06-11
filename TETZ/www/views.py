@@ -448,36 +448,45 @@ def visualization_data(request, file_id):
         file_record = UploadedFile.objects.get(file_id=file_id, user=request.user)
         file_path = os.path.join(settings.MEDIA_ROOT, 'uploads', file_record.stored_filename)
 
-        # Определяем тип файла и читаем данные
         if file_record.file_type == 'xlsx':
             df = pd.read_excel(file_path, engine='openpyxl')
         elif file_record.file_type == 'csv':
             df = pd.read_csv(file_path)
         else:
-            return redirect('visualization')  # Если формат не поддерживается
+            return redirect('visualization')
 
-        # Преобразуем DataFrame в список словарей для передачи в шаблон
+        # Преобразуем DataFrame в список словарей
         data = df.to_dict('records')
-        columns = df.columns.tolist()
 
-        # Определяем тип данных для выбора визуализации
-        chart_type = 'bar'  # По умолчанию
-        if 'Параметр' in columns and 'Значение' in columns:
-            chart_type = 'funnel'
-        elif 'Месяц' in columns:
-            chart_type = 'line'
+        # Автоматически определяем колонки для графика
+        if len(df.columns) >= 2:
+            # Берем первые две колонки (первая - метки, вторая - значения)
+            chart_data = {
+                'label_column': df.columns[0],
+                'value_column': df.columns[1],
+                'labels': df.iloc[:, 0].astype(str).tolist(),
+                'values': df.iloc[:, 1].tolist()
+            }
+        else:
+            # Если только одна колонка - используем индекс как метки
+            chart_data = {
+                'label_column': 'Index',
+                'value_column': df.columns[0],
+                'labels': df.index.astype(str).tolist(),
+                'values': df.iloc[:, 0].tolist()
+            }
 
         context = {
             'file_id': file_id,
             'file_name': file_record.original_filename,
             'data': data,
-            'columns': columns,
-            'chart_type': chart_type,
+            'columns': df.columns.tolist(),
+            'chart_data': chart_data,
+            'chart_type': 'bar',
             'user_files': UploadedFile.objects.filter(user=request.user).order_by('-upload_date')
         }
 
         return render(request, 'visualization.html', context)
-
     except Exception as e:
         messages.error(request, f'Ошибка обработки файла: {str(e)}')
         return redirect('visualization')
