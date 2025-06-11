@@ -167,6 +167,7 @@
                                 <canvas id="mainChart"></canvas>
                             </div>
                             <script src="{% static 'www/js/chart.min.js' %}"></script>
+                            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 
                             <!-- Таблица данных -->
                             <div class="mt-4">
@@ -247,9 +248,7 @@
         </div>
     {% endif %}
 </div>
-{% endblock %}
 
-{% block scripts %}
 
 <script>
     $(document).ready(function() {
@@ -260,13 +259,16 @@
 
     console.log("Chart data:", chartData);
 
+    // Проверка, что chartData - объект (на случай, если default сработал)
+    const validatedChartData = typeof chartData === 'object' ? chartData : JSON.parse(chartData || '{}');
+
     // Инициализация графика при загрузке страницы
-    if (chartData.labels && chartData.values) {
+    if (validatedChartData.labels && validatedChartData.values) {
         renderChart(initialChartType);
     }
 
     // Обработчик изменения типа графика
-    $('.chart-type-btn').click(function(e) {
+    $('.chart-type-btn').on('click', function(e) {
         e.preventDefault();
         const chartType = $(this).data('type');
         renderChart(chartType);
@@ -283,11 +285,18 @@
         // Удаляем предыдущий график
         if (currentChart) {
             currentChart.destroy();
+            currentChart = null;
+        }
+
+        // Проверка наличия данных
+        if (!validatedChartData.labels || !validatedChartData.values) {
+            console.error("Chart data is incomplete!");
+            return;
         }
 
         // Подготовка данных
-        const labels = chartData.labels;
-        const values = chartData.values.map(val => {
+        const labels = validatedChartData.labels;
+        const values = validatedChartData.values.map(val => {
             // Преобразуем значения в числа
             const num = parseFloat(val);
             return isNaN(num) ? 0 : num;
@@ -300,7 +309,7 @@
             plugins: {
                 title: {
                     display: true,
-                    text: `${chartData.value_column} по ${chartData.label_column}`
+                    text: `${validatedChartData.value_column || 'Values'} по ${validatedChartData.label_column || 'Categories'}`
                 },
                 tooltip: {
                     callbacks: {
@@ -313,17 +322,22 @@
         };
 
         // Специальные настройки для разных типов графиков
-        if (chartType === 'bar') {
-            chartOptions.indexAxis = 'y'; // Горизонтальные столбцы
-            chartOptions.scales = { x: { beginAtZero: true } };
-        } else if (chartType === 'line') {
-            chartOptions.scales = { y: { beginAtZero: true } };
-        } else if (chartType === 'pie' || chartType === 'doughnut') {
-            chartOptions.plugins.tooltip.callbacks.label = function(context) {
-                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                const percentage = Math.round((context.raw / total) * 100);
-                return `${context.label}: ${context.raw} (${percentage}%)`;
-            };
+        switch (chartType) {
+            case 'bar':
+                chartOptions.indexAxis = 'y'; // Горизонтальные столбцы
+                chartOptions.scales = { x: { beginAtZero: true } };
+                break;
+            case 'line':
+                chartOptions.scales = { y: { beginAtZero: true } };
+                break;
+            case 'pie':
+            case 'doughnut':
+                chartOptions.plugins.tooltip.callbacks.label = function(context) {
+                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                    const percentage = Math.round((context.raw / total) * 100);
+                    return `${context.label}: ${context.raw} (${percentage}%)`;
+                };
+                break;
         }
 
         // Создаем график
@@ -332,7 +346,7 @@
             data: {
                 labels: labels,
                 datasets: [{
-                    label: chartData.value_column,
+                    label: validatedChartData.value_column || 'Values',
                     data: values,
                     backgroundColor: getChartColors(chartType, values.length),
                     borderColor: 'rgba(75, 192, 192, 1)',
@@ -369,12 +383,15 @@
     }
 
     // Обработчик кнопки экспорта
-    $('#exportBtn').click(function() {
-        if (currentChart) {
+    $('#exportBtn').on('click', function() {
+        const canvas = document.getElementById('mainChart');
+        if (currentChart && canvas) {
             const link = document.createElement('a');
             link.download = 'chart.png';
-            link.href = document.getElementById('mainChart').toDataURL('image/png');
+            link.href = canvas.toDataURL('image/png');
+            document.body.appendChild(link);
             link.click();
+            document.body.removeChild(link);
         } else {
             toastr.warning('Нет данных для экспорта', 'Внимание');
         }
@@ -391,7 +408,7 @@
     // Показываем сообщения Django
     {% if messages %}
         {% for message in messages %}
-            toastr.{{ message.tags }}("{{ message }}");
+            toastr.{{ message.tags }}("{{ message|escapejs }}");
         {% endfor %}
     {% endif %}
 });
