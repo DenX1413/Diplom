@@ -5,7 +5,23 @@
 {% block content %}
 <link href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
-
+<script>
+    // Инициализация toastr сразу после подключения
+    toastr.options = {
+        closeButton: true,
+        progressBar: true,
+        positionClass: "toast-top-right",
+        preventDuplicates: true,
+        showDuration: "300",
+        hideDuration: "1000",
+        timeOut: "5000",
+        extendedTimeOut: "1000",
+        showEasing: "swing",
+        hideEasing: "linear",
+        showMethod: "fadeIn",
+        hideMethod: "fadeOut"
+    };
+</script>
 <style>
     /* Toastr notifications */
     .toast {
@@ -92,6 +108,27 @@
     .palette-btn {
         margin-bottom: 5px;
     }
+    .viz-list-item {
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .viz-list-item:hover {
+        background-color: #f8f9fa;
+    }
+    .viz-actions {
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+    .viz-list-item:hover .viz-actions {
+        opacity: 1;
+    }
+    .viz-list-item.loading {
+    background-color: #f8f9fa;
+    opacity: 0.7;
+    }
+    .viz-list-item.loading .viz-actions {
+        opacity: 1;
+    }
 </style>
 
 <div class="container mt-4">
@@ -102,7 +139,7 @@
         </div>
     {% else %}
         <div class="row">
-            <!-- Боковая панель с файлами -->
+            <!-- Боковая панель с файлами и визуализациями -->
             <div class="col-md-4">
                 <div class="card mb-4">
                     <div class="card-header bg-primary text-white">
@@ -149,27 +186,44 @@
                                     <i class="fas fa-upload"></i>
                                 </button>
                             </div>
-                            <small class="form-text text-muted">Поддерживаемые форматы: CSV, XLSX</small>
+                            <small class="form-text text-muted">Поддерживаемые форматы: CSV, XLSX, MXL</small>
                         </form>
                     </div>
                 </div>
 
+                <!-- Список сохраненных визуализаций -->
                 <div class="card mb-4">
                     <div class="card-header bg-primary text-white">
-                        <h5 class="mb-0">История запросов</h5>
+                        <h5 class="mb-0">Сохраненные визуализации</h5>
                     </div>
                     <div class="card-body p-0">
-                        <div class="list-group list-group-flush" id="queryHistory">
-                            {% for item in query_history|slice:":10" %}
-                                <div class="list-group-item">
-                                    <div class="d-flex justify-content-between">
-                                        <small class="text-muted">{{ item.timestamp|date:"d.m.Y H:i" }}</small>
-                                        <span class="badge bg-info">{{ item.get_query_type_display }}</span>
+                        <div class="list-group list-group-flush" id="savedVisualizations">
+                            {% for viz in user_visualizations %}
+                                <div class="list-group-item viz-list-item d-flex justify-content-between align-items-center"
+                                     data-viz-id="{{ viz.visualization_id }}">
+                                    <div class="d-flex align-items-center">
+                                        <i class="fas fa-chart-pie me-2 text-info"></i>
+                                        <span class="text-truncate" style="max-width: 150px;" title="{{ viz.title }}">
+                                            {{ viz.title }}
+                                        </span>
                                     </div>
-                                    <div class="mt-1">{{ item.query_text|truncatechars:40 }}</div>
+                                    <div class="viz-actions">
+                                        <form method="post" action="{% url 'delete_visualization' viz.visualization_id %}" class="d-inline">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Удалить" onclick="return confirm('Вы уверены?')">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </form>
+                                        <a href="{% url 'load_visualization' viz.visualization_id %}"
+                                           class="btn btn-sm btn-outline-primary ms-1 load-viz-btn"
+                                           title="Загрузить"
+                                           data-viz-id="{{ viz.visualization_id }}">
+                                            <i class="fas fa-eye"></i>
+                                        </a>
+                                    </div>
                                 </div>
                             {% empty %}
-                                <div class="list-group-item text-muted">Нет истории запросов</div>
+                                <div class="list-group-item text-muted">Нет сохраненных визуализаций</div>
                             {% endfor %}
                         </div>
                     </div>
@@ -300,6 +354,8 @@
                                     Сделать публичной
                                 </label>
                             </div>
+                            <input type="hidden" id="vizConfig">
+                            <input type="hidden" id="vizData">
                         </form>
                     </div>
                     <div class="modal-footer">
@@ -322,6 +378,7 @@ $(document).ready(function() {
     const initialChartType = '{{ chart_type|default:"bar" }}';
     let customColors = {}; // Хранит пользовательские цвета
     let colorPickerActive = false; // Флаг активности палитры цветов
+    let currentFileId = {% if file_id %}{{ file_id }}{% else %}null{% endif %};
 
     // Парсим данные
     let chartData;
@@ -728,24 +785,176 @@ $(document).ready(function() {
 
     // Обработчик кнопки сохранения визуализации
     $('#saveVizBtn').on('click', function() {
+        if (!currentChart || !currentFileId) {
+            toastr.error('Нет данных для сохранения', 'Ошибка');
+            return;
+        }
+
+        // Подготавливаем данные для сохранения
+        const config = {
+            chartType: currentChart.config.type,
+            chartData: chartData,
+            customColors: customColors,
+            tableData: {
+                columns: [{% for column in columns %}"{{ column }}",{% endfor %}],
+                rows: [{% for row in data %}{% for value in row.values %}"{{ value }}",{% endfor %}{% endfor %}]
+            }
+        };
+
+        $('#vizConfig').val(JSON.stringify(config));
+        $('#vizData').val(JSON.stringify(chartData));
         $('#saveVizModal').modal('show');
     });
 
     // Подтверждение сохранения визуализации
-    $('#confirmSaveViz').on('click', function() {
-        const title = $('#vizTitle').val();
-        const description = $('#vizDescription').val();
-        const isPublic = $('#vizIsPublic').is(':checked');
+    $('#confirmSaveViz').off('click').on('click', function() {
+        const $btn = $(this);
+        const originalText = $btn.html();
+        $btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Сохранение...');
 
-        if (!title) {
-            toastr.error('Введите название визуализации', 'Ошибка');
-            return;
+        try {
+            const formData = {
+                title: $('#vizTitle').val().trim(),
+                description: $('#vizDescription').val().trim(),
+                is_public: $('#vizIsPublic').is(':checked') ? 'true' : 'false',
+                config: $('#vizConfig').val(),
+                data: $('#vizData').val(),
+                file_id: currentFileId,
+                csrfmiddlewaretoken: '{{ csrf_token }}'
+            };
+
+            // Валидация
+            if (!formData.title) {
+                showToast('error', 'Введите название визуализации');
+                $('#vizTitle').focus();
+                return;
+            }
+
+            $.ajax({
+                url: '/save_visualization/',
+                type: 'POST',
+                data: formData,
+                dataType: 'json',
+                success: function(response) {
+                    if (response && response.status === 'success') {
+                        showToast('success', 'Визуализация успешно сохранена');
+                        $('#saveVizModal').modal('hide');
+                        setTimeout(() => location.reload(), 1500);
+                    } else {
+                        showToast('error', response?.message || 'Неизвестная ошибка сервера');
+                    }
+                },
+                error: function(xhr) {
+                    const errorMsg = xhr.responseJSON?.message ||
+                                   'Ошибка соединения с сервером';
+                    showToast('error', errorMsg);
+                    console.error('Ошибка сохранения:', xhr.responseText);
+                },
+                complete: function() {
+                    $btn.prop('disabled', false).html(originalText);
+                }
+            });
+        } catch (e) {
+            showToast('error', 'Ошибка в клиентском коде: ' + e.message);
+            console.error(e);
+            $btn.prop('disabled', false).html(originalText);
         }
-
-        // Здесь должна быть логика сохранения
-        toastr.success('Визуализация сохранена', 'Успешно');
-        $('#saveVizModal').modal('hide');
     });
+
+    // Универсальная функция для показа уведомлений
+    function showToast(type, message) {
+        const toast = {
+            error: toastr.error,
+            success: toastr.success,
+            warning: toastr.warning,
+            info: toastr.info
+        };
+
+        if (toast[type] && typeof toast[type] === 'function') {
+            toast[type](message);
+        } else {
+            console[type](message);
+        }
+    }
+
+    // Обработчик загрузки сохраненной визуализации
+    $(document).on('click', '.load-viz-btn', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const $btn = $(this);
+    const $vizItem = $btn.closest('.viz-list-item');
+    const vizId = $vizItem.data('viz-id');
+
+    // Визуальная обратная связь
+    $vizItem.addClass('loading');
+    $btn.html('<span class="spinner-border spinner-border-sm"></span>');
+
+    $.ajax({
+        url: `/load_visualization/${vizId}/`,
+        type: 'GET',
+        dataType: 'json',
+        success: function(response) {
+            if (response.status === 'success') {
+                // Обновляем текущие данные
+                currentFileId = response.file_id;
+                chartData = response.data;
+                customColors = response.config.customColors || {};
+
+                // Перерисовываем график
+                renderChart(response.config.chartType, chartData);
+
+                // Обновляем таблицу
+                updateDataTable(response.config.tableData);
+
+                // Обновляем заголовок
+                $('.card-header h4').text(`Визуализация: ${response.title}`);
+
+                toastr.success('Визуализация успешно загружена');
+            } else {
+                toastr.error(response.message || 'Ошибка загрузки');
+            }
+        },
+        error: function(xhr) {
+            const errorMsg = xhr.responseJSON?.message ||
+                           'Ошибка при загрузке визуализации';
+            toastr.error(errorMsg);
+            console.error('Ошибка:', xhr.responseText);
+        },
+        complete: function() {
+            $vizItem.removeClass('loading');
+            $btn.html('<i class="fas fa-eye"></i>');
+        }
+    });
+});
+
+// Функция обновления таблицы данных
+// Функция обновления таблицы данных
+function updateDataTable(tableData) {
+    const $table = $('#dataTable');
+    $table.find('thead').empty();
+    $table.find('tbody').empty();
+
+    // Заголовки
+    const $header = $('<thead>').addClass('table-dark');
+    const $headerRow = $('<tr>');
+    tableData.columns.forEach(col => {
+        $headerRow.append($('<th>').text(col));
+    });
+    $header.append($headerRow);
+    $table.append($header);
+
+    // Данные - теперь ожидаем массив объектов
+    const $body = $('<tbody>');
+    tableData.rows.forEach(row => {
+        const $row = $('<tr>');
+        tableData.columns.forEach(col => {
+            $row.append($('<td>').text(row[col] || ''));
+        });
+        $body.append($row);
+    });
+    $table.append($body);
+}
 
     // Инициализация Toastr
     toastr.options = {

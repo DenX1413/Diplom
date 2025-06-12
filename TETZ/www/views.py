@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from io import BytesIO  # Для работы с бинарными данными в памяти
 from random import randint
-
+from django.template.loader import render_to_string
 import numpy as np
 import pandas as pd
 import psycopg2
@@ -342,83 +342,6 @@ def download_file(request, file_id):
         return JsonResponse({'status': 'error', 'message': 'File not found or access denied'}, status=404)
 
 
-@login_required
-def save_visualization(request):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-
-            # Создаем или обновляем визуализацию
-            visualization, created = Visualization.objects.update_or_create(
-                user=request.user,
-                title=data.get('title', 'New Visualization'),
-                defaults={
-                    'metadata_id': data.get('metadata_id'),
-                    'description': data.get('description', ''),
-                    'visualization_type': data.get('type', 'bar_chart'),
-                    'config': data.get('config', {}),
-                    'is_public': data.get('is_public', False)
-                }
-            )
-
-            # Логируем действие
-            action_type = 'visualization_create' if created else 'visualization_edit'
-            UserActivityLog.objects.create(
-                user=request.user,
-                action_type=action_type,
-                action_details=f"Saved visualization: {visualization.title}",
-                ip_address=get_client_ip(request),
-                user_agent=request.META.get('HTTP_USER_AGENT', '')
-            )
-
-            # Создаем запись в истории запросов
-            QueryHistory.objects.create(
-                user=request.user,
-                query_text=f"Saved visualization: {visualization.title}",
-                query_type='visualize',
-                visualization=visualization,
-                parameters={
-                    'type': data.get('type', 'bar_chart'),
-                    'is_public': data.get('is_public', False)
-                }
-            )
-
-            return JsonResponse({
-                'status': 'success',
-                'visualization_id': visualization.visualization_id,
-                'created': created
-            })
-        except Exception as e:
-            return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
-
-    return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
-
-
-@login_required
-def get_visualization_history(request):
-    try:
-        # Получаем историю визуализаций пользователя
-        history = QueryHistory.objects.filter(
-            user=request.user,
-            query_type__in=['upload', 'visualize']
-        ).order_by('-timestamp')[:50]  # Последние 50 записей
-
-        history_data = []
-        for item in history:
-            history_data.append({
-                'id': item.query_id,
-                'type': item.get_query_type_display(),
-                'text': item.query_text,
-                'timestamp': item.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
-                'file_id': item.file.file_id if item.file else None,
-                'file_name': item.file.original_filename if item.file else None,
-                'visualization_id': item.visualization.visualization_id if item.visualization else None,
-                'visualization_title': item.visualization.title if item.visualization else None
-            })
-
-        return JsonResponse({'status': 'success', 'history': history_data})
-    except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
 
 
 class VisualizationView(AuthRequiredMixin, View):
@@ -643,6 +566,135 @@ def process_production_data(df):
             }
         }
     }
+
+
+@login_required
+@require_POST
+def save_visualization(request):
+    try:
+        # Проверка CSRF
+        if not request.POST.get('csrfmiddlewaretoken'):
+            return JsonResponse({'status': 'error', 'message': 'CSRF token missing'}, status=400)
+
+        # Проверка обязательных полей
+        required_fields = ['title', 'config', 'data', 'file_id']
+        for field in required_fields:
+            if field not in request.POST:
+                return JsonResponse({'status': 'error', 'message': f'Missing required field: {field}'}, status=400)
+
+        try:
+            config = json.loads(request.POST['config'])
+            data = json.loads(request.POST['data'])
+            file_id = int(request.POST['file_id'])
+        except (json.JSONDecodeError, ValueError) as e:
+            return JsonResponse({'status': 'error', 'message': f'Invalid data format: {str(e)}'}, status=400)
+
+        # Получаем файл и метаданные
+        try:
+            file_record = UploadedFile.objects.get(file_id=file_id, user=request.user)
+            metadata, created = FileDataMetadata.objects.get_or_create(
+                file=file_record,
+                defaults={
+                    'data_type': 'other',
+                    'columns_info': {'columns': config.get('tableData', {}).get('columns', [])}
+                }
+            )
+        except UploadedFile.DoesNotExist:
+            return JsonResponse({'status': 'error', 'message': 'File not found'}, status=404)
+
+        # Создаем визуализацию
+        visualization = Visualization.objects.create(
+            user=request.user,
+            metadata=metadata,
+            title=request.POST['title'],
+            description=request.POST.get('description', ''),
+            visualization_type=config.get('chartType', 'bar'),
+            config=config,
+            is_public=request.POST.get('is_public', 'false') == 'true'
+        )
+
+        # Создаем запись в истории
+        QueryHistory.objects.create(
+            user=request.user,
+            query_text=f"Saved visualization: {request.POST['title']}",
+            query_type='visualize',
+            file=file_record,
+            visualization=visualization,
+            parameters={
+                'chart_type': config.get('chartType'),
+                'is_public': request.POST.get('is_public') == 'true'
+            }
+        )
+
+        return redirect(reverse('visualization'))
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'status': 'error',
+            'message': f'Server error: {str(e)}'
+        }, status=500)
+
+
+from django.shortcuts import get_object_or_404
+
+
+@login_required
+def load_visualization(request, viz_id):
+    viz = get_object_or_404(Visualization, visualization_id=viz_id, user=request.user)
+
+    table_data = viz.config.get('tableData', {})
+    rows = table_data.get('rows', [])
+    columns = table_data.get('columns', [])
+
+    structured_rows = []
+    if rows and columns:
+        # Assuming rows is a flattened list, we need to group by row
+        num_columns = len(columns)
+        for i in range(0, len(rows), num_columns):
+            row_values = rows[i:i + num_columns]
+            row_dict = {columns[j]: row_values[j] for j in range(num_columns)}
+            structured_rows.append(row_dict)
+
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return JsonResponse({
+            'status': 'success',
+            'title': viz.title,
+            'chart_data': viz.config['chartData'],
+            'chart_type': viz.config.get('chartType', 'bar'),
+            'table_data': {
+                'columns': columns,
+                'rows': structured_rows
+            }
+        })
+    else:
+        context = {
+            'file_name': viz.title,
+            'data': structured_rows,
+            'columns': columns,
+            'chart_data': json.dumps(viz.config['chartData']),
+            'chart_type': viz.config.get('chartType', 'bar'),
+            'user_files': UploadedFile.objects.filter(user=request.user),
+            'user_visualizations': Visualization.objects.filter(user=request.user)
+        }
+        return render(request, 'visualization.html', context)
+
+
+@login_required
+@require_POST
+def delete_visualization(request, viz_id):
+    try:
+        visualization = Visualization.objects.get(visualization_id=viz_id, user=request.user)
+        visualization.delete()
+
+        return redirect(reverse('visualization'))
+
+    except Exception as e:
+        return JsonResponse({
+            'status': 'error',
+            'message': str(e)
+        }, status=400)
 
 # Вспомогательные функции для обработки данных
 def process_sales_data(df, chart_type):
